@@ -19,7 +19,18 @@ import {
 } from "firebase/firestore";
 import { ElMessage } from "element-plus";
 import { makePairs } from "./utils/pairing";
-import { VideoPlay,Refresh } from "@element-plus/icons-vue";
+import { VideoPlay, Refresh } from "@element-plus/icons-vue";
+
+type MemberDoc = {
+  displayName?: string;
+  isHost?: boolean;
+  active?: boolean;
+  joinedAt?: unknown;
+};
+type PairDoc = {
+  members: string[];
+  index: number;
+};
 
 const meName = ref("");
 const joinName = ref("");
@@ -145,14 +156,21 @@ async function enterRoom(id: string) {
     (s) => (room.value = { id: s.id, ...s.data() })
   );
   unsubMembers = onSnapshot(collection(roomRef, "members"), (snap) => {
-    members.value = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => a.displayName?.localeCompare(b.displayName) || 0);
+    const items = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as MemberDoc),
+    })) as Array<MemberDoc & { id: string }>;
+
+    members.value = items.sort((a, b) =>
+      (a.displayName ?? "").localeCompare(b.displayName ?? "")
+    );
   });
   unsubPairs = onSnapshot(collection(roomRef, "pairs"), (snap) => {
-    pairs.value = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => a.index - b.index);
+    const items = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as PairDoc),
+    })) as Array<PairDoc & { id: string }>;
+    pairs.value = items.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
   });
 }
 
