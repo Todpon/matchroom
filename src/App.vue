@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted, watch } from "vue";
+import { ref, computed, onUnmounted, watch, onMounted } from "vue";
 import { auth, db } from "./firebase";
 import {
   signInAnonymously,
@@ -19,8 +19,8 @@ import {
 } from "firebase/firestore";
 import { ElMessage } from "element-plus";
 import { makePairs } from "./utils/pairing";
+import { VideoPlay,Refresh } from "@element-plus/icons-vue";
 
-// -------- state --------
 const meName = ref("");
 const joinName = ref("");
 const joinRoomId = ref("");
@@ -33,12 +33,15 @@ const pairs = ref<any[]>([]);
 const isHost = computed(() => room.value?.hostUid === auth.currentUser?.uid);
 const meUid = computed(() => auth.currentUser?.uid || "");
 
-// map uid -> displayName เพื่อโชว์ชื่อจริง
 const nameByUid = computed<Record<string, string>>(() =>
   Object.fromEntries(members.value.map((m) => [m.id, m.displayName || m.id]))
 );
 
-// คู่ของฉัน (หา pair ที่มี uid ของเรา)
+const isMobile = ref(false);
+onMounted(() => {
+  isMobile.value = window.matchMedia("(max-width: 768px)").matches;
+});
+
 const myPair = computed(() => {
   const uid = meUid.value;
   if (!uid) return null;
@@ -47,10 +50,9 @@ const myPair = computed(() => {
   return { index: p.index, members: p.members as string[] };
 });
 
-// Dialog แจ้งผลจับคู่ของฉัน
 const showMyPairDialog = ref(false);
 watch(
-  () => pairs.value.map((p) => p.id).join(","), // trigger เมื่อมีผลคู่ใหม่
+  () => pairs.value.map((p) => p.id).join(","),
   () => {
     if (room.value?.status === "paired" && myPair.value) {
       showMyPairDialog.value = true;
@@ -170,12 +172,10 @@ async function startPairing() {
     const membersCol = collection(roomRef, "members");
     const pairsCol = collection(roomRef, "pairs");
 
-    // step 1: อ่านสมาชิก
     const ms = await getDocs(membersCol);
     const uids = ms.docs.map((d) => d.id);
     if (uids.length < 2) return ElMessage.error("ต้องมีอย่างน้อย 2 คน");
 
-    // step 2: ล็อกห้อง
     await runTransaction(db, async (trx) => {
       const snap = await trx.get(roomRef);
       if (!snap.exists()) throw new Error("ไม่พบห้อง");
@@ -186,7 +186,6 @@ async function startPairing() {
       trx.update(roomRef, { status: "locked", startedAt: serverTimestamp() });
     });
 
-    // step 3: ลบคู่เดิม + เขียนใหม่
     const batch = writeBatch(db);
     const existing = await getDocs(pairsCol);
     existing.forEach((d) => batch.delete(d.ref));
@@ -206,7 +205,6 @@ async function startPairing() {
   }
 }
 
-// กด “สุ่มใหม่” (เปลี่ยนสถานะกลับ open แล้วเรียก startPairing)
 async function reshuffle() {
   if (!isHost.value) return;
   const roomRef = doc(db, "rooms", roomId.value);
@@ -221,13 +219,11 @@ async function reshuffle() {
   await startPairing();
 }
 
-// ช่วยแสดงชื่อของแต่ละคู่แบบอ่านง่าย (ชื่อจริง)
 function pairDisplay(p: any) {
   const names = (p.members as string[]).map((u) => nameByUid.value[u] || u);
   return names.join(" • ");
 }
 
-// คัดลอกรหัสห้อง
 async function copyRoomId() {
   try {
     await navigator.clipboard.writeText(roomId.value);
@@ -239,49 +235,66 @@ async function copyRoomId() {
 </script>
 
 <template>
-  <section class="mx-auto max-w-5xl p-4 sm:p-6">
-    <!-- header -->
-    <header class="mb-5 flex items-center justify-between">
-      <h1 class="text-3xl font-extrabold tracking-tight" style="color: #006359">
-        MatchRoom
-      </h1>
+  <div class="container">
+    <!-- Header -->
+    <el-page-header class="mb-4">
+      <template #content>
+        <div class="flex-center-between">
+          <h1 class="app-title">MatchRoom</h1>
 
-      <div v-if="room" class="flex items-center gap-2 text-sm">
-        <span class="text-gray-600">รหัสห้อง:</span>
-        <b class="px-2 py-1 rounded bg-gray-100">{{ roomId }}</b>
-        <el-button size="small" @click="copyRoomId">คัดลอก</el-button>
-      </div>
-    </header>
+          <div v-if="room" class="room-chip">
+            <span>รหัสห้อง:</span>
+            <el-tag type="info" effect="plain">{{ roomId }}</el-tag>
+            <el-button size="small" @click="copyRoomId">คัดลอก</el-button>
+          </div>
+        </div>
+      </template>
+    </el-page-header>
 
-    <!-- before join/create -->
-    <div v-if="!room" class="grid gap-4 sm:grid-cols-2">
-      <el-card class="rounded-2xl shadow-md">
-        <template #header>สร้างห้อง</template>
-        <el-input v-model="meName" placeholder="ชื่อของคุณ" class="mb-3" />
-        <el-button type="success" round class="w-full" @click="createRoom"
-          >เริ่มเลย</el-button
-        >
-      </el-card>
+    <el-row v-if="!room" :gutter="isMobile ? 0 : 16">
+      <el-col :xs="24" :md="12" class="mb-4">
+        <el-card shadow="hover">
+          <template #header>
+            <div class="card-head">สร้างห้อง</div>
+          </template>
 
-      <el-card class="rounded-2xl shadow-md">
-        <template #header>เข้าร่วมห้อง</template>
-        <el-input v-model="joinName" placeholder="ชื่อของคุณ" class="mb-3" />
-        <el-input v-model="joinRoomId" placeholder="รหัสห้อง" class="mb-3" />
-        <el-button type="primary" round class="w-full" @click="joinRoom"
-          >เข้าร่วม</el-button
-        >
-      </el-card>
-    </div>
+          <el-form label-position="top">
+            <el-form-item label="ชื่อของคุณ">
+              <el-input v-model="meName" placeholder="เช่น Alex" />
+            </el-form-item>
+            <el-button type="success" round class="w-100" @click="createRoom">
+              เริ่มเลย
+            </el-button>
+          </el-form>
+        </el-card>
+      </el-col>
 
-    <!-- in room -->
-    <div v-else class="space-y-4">
-      <!-- status / actions -->
-      <el-card class="rounded-2xl shadow-md">
-        <div
-          class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
-        >
-          <div class="text-sm font-medium">
-            สถานะ:
+      <el-col :xs="24" :md="12" class="mb-4">
+        <el-card shadow="hover">
+          <template #header>
+            <div class="card-head">เข้าร่วมห้อง</div>
+          </template>
+
+          <el-form label-position="top">
+            <el-form-item label="ชื่อของคุณ">
+              <el-input v-model="joinName" placeholder="เช่น Beam" />
+            </el-form-item>
+            <el-form-item label="รหัสห้อง">
+              <el-input v-model="joinRoomId" placeholder="เช่น a1B2c3" />
+            </el-form-item>
+            <el-button type="primary" round class="w-100" @click="joinRoom">
+              เข้าร่วม
+            </el-button>
+          </el-form>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <div v-else class="no-overflow">
+      <el-card class="mb-4" shadow="hover">
+        <div class="flex-center-between">
+          <div class="status-line">
+            <span>สถานะ:</span>
             <el-tag
               :type="
                 room.status === 'paired'
@@ -294,101 +307,210 @@ async function copyRoomId() {
               {{ room.status }}
             </el-tag>
           </div>
-
-          <div v-if="isHost" class="flex gap-2">
+          <div v-if="isHost" class="btns desktop-only">
             <el-button
               type="primary"
               round
               :disabled="members.length < 2 || room.status !== 'open'"
               @click="startPairing"
+              >เริ่มจับคู่</el-button
             >
-              เริ่มจับคู่
-            </el-button>
             <el-button
               type="success"
               round
               :disabled="members.length < 2 || room.status !== 'paired'"
               @click="reshuffle"
+              >สุ่มใหม่</el-button
             >
-              สุ่มใหม่
-            </el-button>
           </div>
         </div>
       </el-card>
 
-      <!-- content grid -->
-      <div class="grid gap-4 md:grid-cols-2">
-        <!-- members -->
-        <el-card class="rounded-2xl shadow-md">
-          <template #header>สมาชิก ({{ members.length }})</template>
-          <div class="grid gap-2">
-            <div
-              v-for="m in members"
-              :key="m.id"
-              class="flex items-center justify-between rounded-xl border p-3"
-            >
-              <div class="flex items-center gap-3">
-                <div
-                  class="flex h-10 w-10 items-center justify-center rounded-full font-bold"
-                  style="background: #e6f2ef; color: #006359"
-                >
-                  {{ m.displayName?.[0]?.toUpperCase() || "U" }}
-                </div>
-                <div
-                  class="font-medium"
-                  :class="{ 'text-brand': m.id === meUid }"
-                >
-                  {{ m.displayName }}
-                  <span v-if="m.id === meUid" class="ml-1 text-xs text-gray-500"
-                    >(ฉัน)</span
+      <div class="desktop-only">
+        <el-row :gutter="16">
+          <el-col :span="12" class="mb-4">
+            <el-card shadow="hover">
+              <template #header
+                ><div class="card-head">
+                  สมาชิก ({{ members.length }})
+                </div></template
+              >
+              <el-empty v-if="!members.length" description="ยังไม่มีสมาชิก" />
+              <el-scrollbar v-else style="max-height: 420px">
+                <el-space direction="vertical" :size="10" fill>
+                  <el-card
+                    v-for="m in members"
+                    :key="m.id"
+                    class="member-item"
+                    shadow="never"
                   >
-                </div>
-              </div>
-              <el-tag v-if="m.isHost" type="success" size="small">Host</el-tag>
-            </div>
-          </div>
+                    <div class="member">
+                      <el-avatar :size="36" class="avatar">{{
+                        m.displayName?.[0]?.toUpperCase() || "U"
+                      }}</el-avatar>
+                      <div class="name">
+                        {{ m.displayName }}
+                        <el-tag
+                          v-if="m.id === meUid"
+                          size="small"
+                          effect="plain"
+                          type="info"
+                          class="ml-4"
+                          >ฉัน</el-tag
+                        >
+                      </div>
+                      <el-tag v-if="m.isHost" size="small" type="success"
+                        >Host</el-tag
+                      >
+                    </div>
+                  </el-card>
+                </el-space>
+              </el-scrollbar>
+            </el-card>
+          </el-col>
+
+          <el-col :span="12" class="mb-4">
+            <el-card shadow="hover">
+              <template #header><div class="card-head">ผลจับคู่</div></template>
+              <el-empty v-if="!pairs.length" description="ยังไม่มีผล" />
+              <el-space v-else direction="vertical" :size="10" fill>
+                <el-card
+                  v-for="p in pairs"
+                  :key="p.id"
+                  class="pair-item"
+                  :class="(p.members as string[]).includes(meUid)?'is-mine':''"
+                  shadow="never"
+                >
+                  <div class="pair-row">
+                    <el-tag size="small" effect="plain">#{{ p.index }}</el-tag>
+                    <div class="pair-text">{{ pairDisplay(p) }}</div>
+                    <el-tag
+                      v-if="p.members.length === 3"
+                      type="warning"
+                      size="small"
+                      >3 คน</el-tag
+                    >
+                    <el-tag
+                      v-else-if="p.members.length === 1"
+                      type="info"
+                      size="small"
+                      >บาย</el-tag
+                    >
+                  </div>
+                </el-card>
+              </el-space>
+            </el-card>
+          </el-col>
+        </el-row>
+      </div>
+
+      <div class="mobile-only">
+        <el-card shadow="hover" class="mb-3">
+          <el-tabs stretch>
+            <el-tab-pane :label="`สมาชิก (${members.length})`" name="members">
+              <el-empty v-if="!members.length" description="ยังไม่มีสมาชิก" />
+              <el-space v-else direction="vertical" :size="8" fill>
+                <el-card
+                  v-for="m in members"
+                  :key="m.id"
+                  class="member-item"
+                  shadow="never"
+                >
+                  <div class="member">
+                    <el-avatar :size="40" class="avatar">{{
+                      m.displayName?.[0]?.toUpperCase() || "U"
+                    }}</el-avatar>
+                    <div class="name name-lg">
+                      {{ m.displayName }}
+                      <el-tag
+                        v-if="m.id === meUid"
+                        size="small"
+                        effect="plain"
+                        type="info"
+                        class="ml-6"
+                        >ฉัน</el-tag
+                      >
+                    </div>
+                    <el-tag v-if="m.isHost" size="small" type="success"
+                      >Host</el-tag
+                    >
+                  </div>
+                </el-card>
+              </el-space>
+            </el-tab-pane>
+
+            <el-tab-pane label="ผลจับคู่" name="pairs">
+              <el-empty v-if="!pairs.length" description="ยังไม่มีผล" />
+              <el-space v-else direction="vertical" :size="8" fill>
+                <el-card
+                  v-for="p in pairs"
+                  :key="p.id"
+                  class="pair-item compact"
+                  :class="(p.members as string[]).includes(meUid)?'is-mine':''"
+                  shadow="never"
+                >
+                  <div class="pair-row">
+                    <el-tag size="small" effect="plain">#{{ p.index }}</el-tag>
+                    <div class="pair-text pair-text-lg">
+                      {{ pairDisplay(p) }}
+                    </div>
+                    <el-tag
+                      v-if="p.members.length === 3"
+                      type="warning"
+                      size="small"
+                      >3 คน</el-tag
+                    >
+                    <el-tag
+                      v-else-if="p.members.length === 1"
+                      type="info"
+                      size="small"
+                      >บาย</el-tag
+                    >
+                  </div>
+                </el-card>
+              </el-space>
+            </el-tab-pane>
+          </el-tabs>
         </el-card>
 
-        <!-- pairs -->
-        <el-card class="rounded-2xl shadow-md" v-if="pairs.length">
-          <template #header>ผลจับคู่</template>
-          <div class="space-y-2">
-            <div
-              v-for="p in pairs"
-              :key="p.id"
-              class="flex items-center justify-between rounded-xl border p-3"
-              :class="(p.members as string[]).includes(meUid) ? 'ring-2 ring-[--brand]' : ''"
-            >
-              <div class="text-gray-500">#{{ p.index }}</div>
-              <div class="font-semibold truncate text-right w-full px-3">
-                {{ pairDisplay(p) }}
-              </div>
-              <el-tag v-if="p.members.length === 3" type="warning" size="small"
-                >3 คน</el-tag
-              >
-              <el-tag
-                v-else-if="p.members.length === 1"
-                type="info"
-                size="small"
-                >บาย</el-tag
-              >
-            </div>
-          </div>
-        </el-card>
+        <!-- sticky bottom actions -->
+        <div v-if="isHost" class="mobile-actions">
+          <el-button
+            type="primary"
+            round
+            class="flex-1"
+            :disabled="members.length < 2 || room.status !== 'open'"
+            @click="startPairing"
+            >เริ่มจับคู่</el-button
+          >
+          <el-button
+            type="success"
+            round
+            class="flex-1"
+            :disabled="members.length < 2 || room.status !== 'paired'"
+            @click="reshuffle"
+            >สุ่มใหม่</el-button
+          >
+        </div>
+
+        <!-- FAB (วงกลม) -->
+        <el-button
+          v-if="isHost"
+          class="fab"
+          circle
+          :type="room.status === 'open' ? 'primary' : 'success'"
+          :icon="room.status === 'open' ? VideoPlay : Refresh"
+          @click="room.status === 'open' ? startPairing() : reshuffle()"
+        />
       </div>
     </div>
 
-    <!-- mobile bottom action (host only) -->
-    <div
-      v-if="room && isHost"
-      class="fixed inset-x-0 bottom-0 z-50 flex items-center justify-center gap-2 bg-white/90 p-3 shadow md:hidden"
-    >
+    <div class="mobile-actions">
       <el-button
         type="primary"
         round
         :disabled="members.length < 2 || room.status !== 'open'"
         @click="startPairing"
-        class="flex-1"
         >เริ่มจับคู่</el-button
       >
       <el-button
@@ -396,46 +518,224 @@ async function copyRoomId() {
         round
         :disabled="members.length < 2 || room.status !== 'paired'"
         @click="reshuffle"
-        class="flex-1"
         >สุ่มใหม่</el-button
       >
     </div>
 
-    <!-- dialog: ผลจับคู่ของฉัน -->
     <el-dialog
       v-model="showMyPairDialog"
       title="ผลจับคู่ของฉัน"
-      width="420px"
+      :width="isMobile ? '92%' : '420px'"
       align-center
+      class="my-dialog"
     >
-      <div class="space-y-2">
-        <p class="text-sm text-gray-600">
-          ลำดับของคุณ: <b>#{{ myPair?.index }}</b>
-        </p>
-        <div class="rounded-xl border p-4">
-          <div class="font-semibold">
-            {{
-              myPair
-                ? myPair.members.map((u) => nameByUid[u] || u).join(" • ")
-                : ""
-            }}
-          </div>
-          <p class="mt-1 text-xs text-gray-500">
-            แชร์หน้าจอนี้ให้เพื่อนในคู่ของคุณได้
-          </p>
-        </div>
-      </div>
-      <template #footer>
-        <el-button type="primary" @click="showMyPairDialog = false"
-          >ตกลง</el-button
-        >
-      </template>
+      <el-result
+        icon="success"
+        title="ได้คู่แล้ว!"
+        :sub-title="`ลำดับ #${myPair?.index}`"
+      >
+        <template #extra>
+          <el-card class="my-pair">
+            <div class="my-pair-text">
+              {{
+                myPair
+                  ? myPair.members.map((u) => nameByUid[u] || u).join(" • ")
+                  : ""
+              }}
+            </div>
+          </el-card>
+          <el-button
+            class="mt-2"
+            type="primary"
+            @click="showMyPairDialog = false"
+            >ตกลง</el-button
+          >
+        </template>
+      </el-result>
     </el-dialog>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.text-brand {
+html,
+body,
+#app {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+.container {
+  max-width: 1060px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 12px;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
+}
+.app-title {
+  font-size: 28px;
+  font-weight: 800;
+  margin: 0;
   color: #006359;
+}
+.flex-center-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.card-head {
+  font-weight: 700;
+  color: #1f2a37;
+}
+
+/* สมาชิก/คู่ */
+.member {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.member-item,
+.pair-item {
+  border-radius: 16px;
+}
+.avatar {
+  background: #e6f2ef;
+  color: #006359;
+  font-weight: 800;
+}
+.name {
+  font-weight: 600;
+  color: #1f2937;
+}
+.pair-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pair-text {
+  font-weight: 700;
+  color: #111827;
+  flex: 1;
+  text-align: right;
+}
+.pair-item.is-mine {
+  outline: 2px solid var(--el-color-primary);
+  background: #f1fbf8;
+}
+
+/* Desktop/Mobile toggle */
+.desktop-only {
+  display: block;
+}
+.mobile-only {
+  display: none;
+}
+
+.pair-text,
+.name {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 768px) {
+  .no-overflow :deep(.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  .no-overflow :deep(.el-col) {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-title {
+    font-size: 24px;
+  }
+  .desktop-only {
+    display: none;
+  }
+  .mobile-only {
+    display: block;
+  }
+
+  .name-lg {
+    font-size: 16px;
+  }
+  .pair-text-lg {
+    font-size: 16px;
+    text-align: left;
+  }
+  .member-item,
+  .pair-item.compact {
+    padding: 8px 10px;
+  }
+
+  .mobile-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    gap: 10px;
+    padding: 10px 12px;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: var(--el-box-shadow-light);
+    margin: 10px 0 4px;
+  }
+
+  .fab {
+    position: fixed;
+    right: 16px;
+    bottom: 88px;
+    z-index: 30;
+    width: 56px;
+    height: 56px;
+    border-radius: 9999px;
+    box-shadow: var(--el-box-shadow-light);
+  }
+
+  :deep(.my-dialog .el-dialog) {
+    width: 92vw !important;
+    max-width: 92vw;
+    margin: 0 auto;
+    border-radius: 16px;
+  }
+}
+.room-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.room-chip :deep(.el-tag) {
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fab {
+  position: fixed;
+  right: 16px;
+  bottom: 88px;
+  z-index: 30;
+  width: 56px;
+  height: 56px;
+  border-radius: 9999px;
+  box-shadow: var(--el-box-shadow-light);
+}
+@media (max-width: 768px) {
+  .mobile-actions .el-button {
+    width: 100%;
+  }
 }
 </style>

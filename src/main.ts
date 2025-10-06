@@ -5,5 +5,5 @@ import 'element-plus/dist/index.css'
 import './style.css'
 
 createApp(App)
-  .use(ElementPlus)
+  .use(ElementPlus, { size: 'large' })
   .mount('#app')
