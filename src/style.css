@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+*{
+  font-family: 'Kanit', sans-serif;
+}
+
 :root { --brand: #006359; }
 body { background: #f7faf9; }
 

@@ -19,7 +19,6 @@ import {
 } from "firebase/firestore";
 import { ElMessage } from "element-plus";
 import { makePairs } from "./utils/pairing";
-import { VideoPlay, Refresh } from "@element-plus/icons-vue";
 
 type MemberDoc = {
   displayName?: string;
@@ -32,6 +31,7 @@ type PairDoc = {
   index: number;
 };
 
+const activeTab = ref("members");
 const meName = ref("");
 const joinName = ref("");
 const joinRoomId = ref("");
@@ -254,7 +254,6 @@ async function copyRoomId() {
 
 <template>
   <div class="container">
-    <!-- Header -->
     <el-page-header class="mb-4">
       <template #content>
         <div class="flex-center-between">
@@ -424,7 +423,7 @@ async function copyRoomId() {
 
       <div class="mobile-only">
         <el-card shadow="hover" class="mb-3">
-          <el-tabs stretch>
+          <el-tabs v-model="activeTab" stretch>
             <el-tab-pane :label="`สมาชิก (${members.length})`" name="members">
               <el-empty v-if="!members.length" description="ยังไม่มีสมาชิก" />
               <el-space v-else direction="vertical" :size="8" fill>
@@ -510,34 +509,7 @@ async function copyRoomId() {
             >สุ่มใหม่</el-button
           >
         </div>
-
-        <!-- FAB (วงกลม) -->
-        <el-button
-          v-if="isHost"
-          class="fab"
-          circle
-          :type="room.status === 'open' ? 'primary' : 'success'"
-          :icon="room.status === 'open' ? VideoPlay : Refresh"
-          @click="room.status === 'open' ? startPairing() : reshuffle()"
-        />
       </div>
-    </div>
-
-    <div class="mobile-actions">
-      <el-button
-        type="primary"
-        round
-        :disabled="members.length < 2 || room.status !== 'open'"
-        @click="startPairing"
-        >เริ่มจับคู่</el-button
-      >
-      <el-button
-        type="success"
-        round
-        :disabled="members.length < 2 || room.status !== 'paired'"
-        @click="reshuffle"
-        >สุ่มใหม่</el-button
-      >
     </div>
 
     <el-dialog
@@ -562,8 +534,9 @@ async function copyRoomId() {
               }}
             </div>
           </el-card>
+          
           <el-button
-            class="mt-2"
+            class="mt-6"
             type="primary"
             @click="showMyPairDialog = false"
             >ตกลง</el-button
@@ -709,18 +682,6 @@ body,
     box-shadow: var(--el-box-shadow-light);
     margin: 10px 0 4px;
   }
-
-  .fab {
-    position: fixed;
-    right: 16px;
-    bottom: 88px;
-    z-index: 30;
-    width: 56px;
-    height: 56px;
-    border-radius: 9999px;
-    box-shadow: var(--el-box-shadow-light);
-  }
-
   :deep(.my-dialog .el-dialog) {
     width: 92vw !important;
     max-width: 92vw;
@@ -748,7 +709,7 @@ body,
   z-index: 30;
   width: 56px;
   height: 56px;
-  border-radius: 9999px;
+  border-radius: 18px;
   box-shadow: var(--el-box-shadow-light);
 }
 @media (max-width: 768px) {
